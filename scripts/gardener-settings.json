@@ -1,0 +1,24 @@
+{
+  "disableAllHooks": true,
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Glob",
+      "Grep",
+      "Edit(./00_Inbox/**)",
+      "Edit(./01_Projects/**)",
+      "Edit(./02_Notes/**)",
+      "Edit(./03_Daily/**)",
+      "Edit(./04_References/**)"
+    ],
+    "deny": [
+      "Read(./99_Private/**)",
+      "Edit(./99_Private/**)",
+      "Edit(./90_Meta/**)",
+      "Edit(./.obsidian/**)",
+      "Bash",
+      "WebFetch",
+      "WebSearch"
+    ]
+  }
+}

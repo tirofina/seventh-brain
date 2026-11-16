@@ -1,0 +1,11 @@
+# Never commit personal or generated data
+config.json
+hermes-inbox.log
+capture-state.json
+capture-cache.json
+gardener-state.json
+gardener-last.json
+gardener-last.txt
+codex-transcripts/
+*.bak-*
+.obsidian/workspace*.json
