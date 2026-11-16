@@ -117,7 +117,10 @@ foreach ($k in @($psi.EnvironmentVariables.Keys)) {
 }
 
 $who = if ($Engine -eq 'claude') { "model=$Model budget_usd=$budget" } else { 'codex' + $(if ($CodexModel) { " model=$CodexModel" } else { '' }) }
-Write-Log "start engine=$Engine $who daily=$DailyDate"
+# Plan usage before the run (what /usage shows), to measure what one run costs of the 5-hour and weekly limits.
+$usageBefore = $null; $usageStart = Get-Date
+$pu = Join-Path $ScriptDir 'plan-usage.ps1'
+if ((Test-Path -LiteralPath $pu) -and ($Engine -eq 'claude')) { . $pu; $usageBefore = Get-PlanUsage }Write-Log "start engine=$Engine $who daily=$DailyDate"
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $p = [System.Diagnostics.Process]::Start($psi)
 $p.StandardInput.Close()   # EOF on stdin so the CLI never waits for piped input
@@ -166,7 +169,7 @@ if ($Engine -eq 'claude') {
   Write-Log ("Done. is_error={0} exit={1} secs={2} | {3}" -f $isError, $p.ExitCode, $secs, $res)
 }
 
-# Post-check (logged, never fatal): every wikilink in the content notes must resolve, and empty
+if ((Test-Path -LiteralPath $pu) -and ($Engine -eq 'claude')) { try { Write-PlanUsage $usageBefore $usageStart $DailyDate $(if ($Engine -eq 'claude') { $cost } else { '' }) $sw.Elapsed.TotalSeconds ${function:Write-Log} $ScriptDir } catch { Write-Log ('usage: ' + $_.Exception.Message) } }# Post-check (logged, never fatal): every wikilink in the content notes must resolve, and empty
 # notes are reported (Obsidian creates one at the vault root when a broken link is clicked).
 try {
   $all = @(Get-ChildItem -LiteralPath $VaultPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\\.obsidian\\' })

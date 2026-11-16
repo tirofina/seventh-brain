@@ -203,7 +203,7 @@ foreach ($f in $files) {
     $snippet = if ($text.Length -gt $MaxChars) { $text.Substring(0, $MaxChars) } else { $text }
     $prompt = @"
 다음은 Obsidian 연구 노트다. 아래 항목을 JSON 객체 하나로만 답한다. 코드펜스나 설명은 쓰지 않는다.
-- summary: 노트의 핵심을 한국어 1-2문장으로 쓴다. 평서문으로 쓰고 "~다"로 끝낸다. "~습니다", "~음", "~함"으로 끝내지 않는다.
+- summary: 노트의 핵심을 한국어 1-2문장으로 쓴다. 평서문으로 쓰고 "~다"로 끝낸다. "~습니다", "~음", "~함"으로 끝내지 않는다. 긍정문으로 쓴다("~한 것은 아니다", "~하지 않았다", "~하기 어렵다" 꼴은 쓰지 않는다).
 - tags: 노트의 주제를 나타내는 태그 3-6개. 띄어쓰기 대신 하이픈을 쓴다.
 - related: 이 노트와 이어지는 개념 2-5개를 짧은 명사로 쓴다.
 고유명사와 약어(Claude, Hermes, Orca, Obsidian, PPG, HRV, EDA 등)는 영어 표기 그대로 쓴다.
