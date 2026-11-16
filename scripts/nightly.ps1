@@ -20,4 +20,5 @@ if (Test-Path -LiteralPath $codexOut) { & powershell.exe @ps (Join-Path $dir 'ca
 & powershell.exe @ps (Join-Path $dir 'collect-references.ps1')
 & powershell.exe @ps (Join-Path $dir 'process-inbox.ps1')
 & powershell.exe @ps (Join-Path $dir 'gardener.ps1')
+& powershell.exe @ps (Join-Path $dir 'apply-topic-plan.ps1')
 & powershell.exe @ps (Join-Path $dir 'sync-prefs.ps1')

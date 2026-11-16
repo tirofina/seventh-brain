@@ -48,8 +48,8 @@ function Write-PlanUsage($before, [datetime]$startedAt, [string]$daily, $cost, [
   $after = Get-PlanUsage
   if (-not $after) { & $log 'usage: could not read plan usage after the run'; return }
   $notes = @()
-  if ($after.FiveReset.Substring(0, 16) -ne $before.FiveReset.Substring(0, 16)) { $notes += '5시간 창이 바뀜' }
-  if ($after.WeekReset.Substring(0, 16) -ne $before.WeekReset.Substring(0, 16)) { $notes += '주간 창이 바뀜' }
+  if ([math]::Abs(([datetime]$after.FiveReset - [datetime]$before.FiveReset).TotalMinutes) -gt 5) { $notes += '5시간 창이 바뀜' }
+  if ([math]::Abs(([datetime]$after.WeekReset - [datetime]$before.WeekReset).TotalMinutes) -gt 5) { $notes += '주간 창이 바뀜' }
   $active = Get-ClaudeActivity $startedAt
   if ($active -gt 0) { $notes += "다른 Claude 세션 $($active)개가 함께 씀" }
   $d5 = $after.Five - $before.Five; $dw = $after.Week - $before.Week
