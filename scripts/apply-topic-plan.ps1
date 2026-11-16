@@ -65,7 +65,11 @@ foreach ($pf in $plans) {
   foreach ($m in @($plan.merges)) { if ($m.from -and $m.into) { $items += [pscustomobject]@{ From = Safe-Name $m.from; Into = Safe-Name $m.into; Kind = 'merge'; Reason = [string]$m.reason } } }
   foreach ($r in @($plan.renames)) { if ($r.from -and $r.to) { $items += [pscustomobject]@{ From = Safe-Name $r.from; Into = Safe-Name $r.to; Kind = 'rename'; Reason = [string]$r.reason } } }
   $done = 0
-  foreach ($it in ($items | Select-Object -First 4)) {
+  # No count limit: the tidy-up only plans changes it is sure of. A plan touching more than half of the
+  # project's topics is still applied, but logged as a warning so a person can look.
+  $topicCount = @(Get-ChildItem -LiteralPath (Join-Path $proj 'log') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '_미분류' }).Count
+  if ($topicCount -gt 0 -and $items.Count * 2 -gt $topicCount) { Write-Log ("WARN {0}: the plan changes {1} of {2} topics; check topic-changes.log" -f $projName, $items.Count, $topicCount) }
+  foreach ($it in ($items | Select-Object -First 50)) {
     if ($it.From -eq $it.Into -or $it.From -eq '_미분류' -or $it.Into -eq '_미분류') { continue }
     $fromNote = Join-Path $proj ($it.From + '.md'); $intoNote = Join-Path $proj ($it.Into + '.md')
     $fromLog = Join-Path $proj ('log\' + $it.From); $intoLog = Join-Path $proj ('log\' + $it.Into)
