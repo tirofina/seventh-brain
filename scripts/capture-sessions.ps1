@@ -43,7 +43,7 @@
 param(
   [string]$ProjectsBase = '',
   [string]$OrcaRoot = '',
-  [string]$DirFilter = '',
+  [string]$DirFilter = '*',          # transcript folders to scan; the Orca project list decides what is kept
   [string]$VaultPath = '',
   [string]$Model = '',
   [string]$ApiBase = 'http://localhost:11434',
@@ -61,7 +61,6 @@ try { $KitConfig = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $MyIn
 if ($KitConfig) {
   if (-not $ProjectsBase) { $ProjectsBase = [string]$KitConfig.claudeProjects }
   if (-not $OrcaRoot) { $OrcaRoot = [string]$KitConfig.orcaRoot }
-  if (-not $DirFilter) { $DirFilter = [string]$KitConfig.dirFilter }
   if (-not $VaultPath) { $VaultPath = [string]$KitConfig.vaultPath }
   if (-not $Model) { $Model = [string]$KitConfig.hermesModel }
 }
@@ -73,7 +72,11 @@ $CacheFile = Join-Path $ScriptDir 'capture-cache.json'   # part summaries of lon
 $ProjRoot  = Join-Path $VaultPath '01_Projects'
 $Unfiled   = '_미분류'
 $NewLabel  = '새 주제'
-$ProjDirs  = @{}   # Orca project name -> vault folder (see Get-ProjectDir)
+$ProjDirs  = @{}   # Orca project id or name -> vault folder (see Get-ProjectDir)
+# Orca's project list (orca-map.ps1). Without it only sessions under OrcaRoot are captured.
+$OrcaProjects = @()
+$OrcaMapFile = Join-Path $ScriptDir 'orca-projects.json'
+if (Test-Path -LiteralPath $OrcaMapFile) { try { $OrcaProjects = @((Get-Content -LiteralPath $OrcaMapFile -Raw -Encoding UTF8 | ConvertFrom-Json).projects) } catch { } }
 $genUri    = "$ApiBase/api/generate"
 
 # Field order matters to a small model: the title is written after it has summed up the work.
@@ -365,14 +368,36 @@ function Invoke-Hermes([string]$prompt, $format) {
   return ($raw | ConvertFrom-Json)
 }
 function Get-OrcaLocation([string]$cwd) {
-  # Map the session's working directory to (Orca project, worktree).
+  # Map the session's working directory to an Orca project, using Orca's own project list
+  # (orca-projects.json from orca-map.ps1): the project whose folder or worktree folder contains
+  # the directory, longest match first, wherever the folder is. Projects Orca keeps under
+  # <OrcaRoot>\workspaces\<folder>\<worktree> also match by folder name, so worktrees Orca no
+  # longer lists still land in their project.
   if (-not $cwd) { return $null }
+  $c = ($cwd -replace '/', '\').TrimEnd('\')
+  $best = $null; $bestLen = -1
+  foreach ($p in $OrcaProjects) {
+    foreach ($e in @($p.paths)) {
+      $ep = ([string]$e.path).TrimEnd('\')
+      if (($c -ieq $ep -or $c.StartsWith($ep + '\', [System.StringComparison]::OrdinalIgnoreCase)) -and $ep.Length -gt $bestLen) {
+        $bestLen = $ep.Length
+        $best = @{ Project = [string]$p.name; Worktree = [string]$e.worktree; Group = [string]$p.group; Id = [string]$p.id; Folder = [string]$p.folder; Path = [string]@($p.paths)[0].path }
+      }
+    }
+  }
+  if ($best) { return $best }
   $root = [regex]::Escape($OrcaRoot.TrimEnd('\'))
-  $m = [regex]::Match($cwd, "^$root\\workspaces\\([^\\]+)\\([^\\]+)", 'IgnoreCase')
-  if ($m.Success) { return @{ Project = $m.Groups[1].Value; Worktree = $m.Groups[2].Value } }
-  $m = [regex]::Match($cwd, "^$root\\projects\\([^\\]+)", 'IgnoreCase')
-  if ($m.Success) { return @{ Project = $m.Groups[1].Value; Worktree = '메인' } }
-  return $null
+  $slug = ''; $wt = ''
+  $m = [regex]::Match($c, "^$root\\workspaces\\([^\\]+)\\([^\\]+)", 'IgnoreCase')
+  if ($m.Success) { $slug = $m.Groups[1].Value; $wt = $m.Groups[2].Value -replace '-', ' ' }
+  else {
+    $m = [regex]::Match($c, "^$root\\projects\\([^\\]+)", 'IgnoreCase')
+    if ($m.Success) { $slug = $m.Groups[1].Value; $wt = '메인' }
+  }
+  if (-not $slug) { return $null }
+  $p = @($OrcaProjects | Where-Object { $_.folder -ieq $slug }) | Select-Object -First 1
+  if ($p) { return @{ Project = [string]$p.name; Worktree = $wt; Group = [string]$p.group; Id = [string]$p.id; Folder = $slug; Path = [string]@($p.paths)[0].path } }
+  return @{ Project = $slug; Worktree = $wt; Group = ''; Id = ''; Folder = $slug; Path = '' }
 }
 function Get-Tags([string]$fm) {
   # Frontmatter tags in either form: "tags: [a, b]" or a "- a" list below "tags:".
@@ -382,23 +407,43 @@ function Get-Tags([string]$fm) {
   if ($m.Success) { return @($m.Groups[1].Value -split '\r?\n' | ForEach-Object { ($_ -replace '^\s*-\s*', '').Trim().Trim('"').Trim("'") } | Where-Object { $_ }) }
   return @()
 }
-function Get-ProjectDir([string]$project) {
-  # The vault folder of an Orca project: the one whose hub (_index.md) names the project in its
-  # tags or in an "orca:" property, so renaming the folder in Obsidian does not split the log.
-  # Without such a hub, the folder named like the project (created on first capture).
-  if ($ProjDirs.ContainsKey($project)) { return $ProjDirs[$project] }
+function Get-ProjectFolders {
+  # Project folders: 01_Projects/<project> and, for Orca project groups, 01_Projects/<group>/<project>.
+  if (-not (Test-Path -LiteralPath $ProjRoot)) { return @() }
+  $top = @(Get-ChildItem -LiteralPath $ProjRoot -Directory)
+  return @($top) + @($top | ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Directory | Where-Object { $_.Name -notin 'log', 'decisions', 'specs' } })
+}
+function Get-ProjectDir($loc) {
+  # The vault folder of an Orca project: the one whose first page (_index.md) names the project in
+  # an "orca:" property (Orca project id) or in its tags, so renaming or moving the folder in
+  # Obsidian does not split the log. Without one, 01_Projects/<group>/<project> (or
+  # 01_Projects/<project>) with a minimal first page that records the Orca id and folder.
+  $key = $(if ($loc.Id) { $loc.Id } else { $loc.Project })
+  if ($ProjDirs.ContainsKey($key)) { return $ProjDirs[$key] }
   $found = ''
-  if (Test-Path -LiteralPath $ProjRoot) {
-    foreach ($d in @(Get-ChildItem -LiteralPath $ProjRoot -Directory)) {
-      $hub = Join-Path $d.FullName '_index.md'
-      if (-not (Test-Path -LiteralPath $hub)) { continue }
-      $fm = Get-Frontmatter (Read-Utf8 $hub)
-      $orca = ([regex]::Match($fm, '(?m)^orca:\s*"?([^"\r\n]+?)"?\s*$')).Groups[1].Value
-      if ($orca -eq $project -or (Get-Tags $fm) -contains $project) { $found = $d.FullName; break }
+  foreach ($d in Get-ProjectFolders) {
+    $hub = Join-Path $d.FullName '_index.md'
+    if (-not (Test-Path -LiteralPath $hub)) { continue }
+    $fm = Get-Frontmatter (Read-Utf8 $hub)
+    $orca = ([regex]::Match($fm, '(?m)^orca:\s*"?([^"\r\n]+?)"?\s*$')).Groups[1].Value
+    $tags = Get-Tags $fm
+    if (($loc.Id -and $orca -eq $loc.Id) -or $orca -eq $loc.Project -or $tags -contains $loc.Project -or ($loc.Folder -and $tags -contains $loc.Folder)) { $found = $d.FullName; break }
+  }
+  if (-not $found) {
+    $name = Safe-Name $loc.Project 60
+    $found = $(if ($loc.Group) { Join-Path (Join-Path $ProjRoot (Safe-Name $loc.Group 60)) $name } else { Join-Path $ProjRoot $name })
+    $hub = Join-Path $found '_index.md'
+    if (-not (Test-Path -LiteralPath $hub)) {
+      $today = Get-Date -Format 'yyyy-MM-dd'
+      $lines = @('---', 'tags: [project]', ('orca: "' + $loc.Id + '"'), ('orca_path: "' + ($loc.Path -replace '\\', '/') + '"'), 'source: claude', "created: $today", "updated: $today", '---', '',
+        ('# ' + $loc.Project), '', ('Orca 프로젝트 ' + $loc.Project + '의 첫 페이지다. 이 프로젝트의 목적을 한두 줄로 적어 두면 작업 세션이 먼저 읽는다.'), '',
+        '## 결정 기록', '', '## 주제 (자동 갱신)', '<!-- auto:topics:start -->', '<!-- auto:topics:end -->', '', '## 최근 진행 (자동 갱신)', '<!-- auto:recent:start -->', '<!-- auto:recent:end -->', '')
+      New-Item -ItemType Directory -Force -Path $found | Out-Null
+      Write-Utf8 $hub ($lines -join "`n")
+      Write-Log ("     new project page: " + $hub.Substring($VaultPath.Length).TrimStart('\')) | Out-Null
     }
   }
-  if (-not $found) { $found = Join-Path $ProjRoot $project }
-  $ProjDirs[$project] = $found
+  $ProjDirs[$key] = $found
   return $found
 }
 function Get-TopicRegistry([string]$projDir) {
@@ -433,12 +478,15 @@ function Get-Topic($reg, [string]$title, $items, [string]$worktree) {
     if ($names -contains $pick) { return $pick }
   }
   # Clearly new: ask for a short noun phrase, then fold spelling variants into a known topic.
-  $p2 = "다음 작업의 주제어를 지어라. 2-4단어 한국어 명사구 하나만 쓴다. 고유명사(Claude, Orca, Obsidian 등)는 영어 표기를 쓴다. 문장이나 설명은 쓰지 않는다.`n`n작업:`n$sessionText"
+  # The worktree line is left out here: given "Orca 워크트리: 메인", the model named topics "Orca ...".
+  $contentText = "제목: $title`n내용: " + ((@($items) | ForEach-Object { [string]$_ }) -join ' / ')
+  $p2 = "다음 작업이 무엇에 관한 것인지 주제어를 지어라. 2-4단어 한국어 명사구 하나만 쓴다. 작업한 내용(대상, 문제, 산출물)으로 짓고, 쓴 도구나 작업 환경 이름(Orca, Claude, Codex, 세션, 워크트리)은 넣지 않는다. 문장이나 설명은 쓰지 않는다.`n`n작업:`n$contentText"
   $schema2 = @{ type = 'object'; properties = @{ topic = @{ type = 'string' } }; required = @('topic') }
   $name = Fix-Names (([string](Invoke-Hermes $p2 $schema2).topic -replace '^\s*(새\s*주제어?|주제어?)\s*[:\uFF1A]?\s*', '').Trim())
   $name = ($name -replace '_', ' ' -replace '\s+', ' ').Trim()
+  $name = ($name -replace '^(?i)(orca|claude|codex)\s+', '').Trim()     # tool names are not topics
   $w = @($name -split ' ' | Where-Object { $_ }); if ($w.Count -gt 4) { $name = ($w[0..3] -join ' ') }
-  $name = ($name -replace '\s*(및|와|과|그리고|,)$', '').Trim()   # cut after 4 words, "설치 및" must not stay
+  $name = ($name -replace '(?i)\s*(및|와|과|그리고|,|and|or|of|the|for|with)$', '').Trim()   # cut after 4 words, "설치 및" must not stay
   if ($name.Length -gt 30) { return '' }
   $name = (Safe-Name $name 30).TrimStart('_').Trim()
   $key = ($name -replace '\s+', '').ToLowerInvariant()
@@ -465,7 +513,7 @@ function Get-WorktreeTopic([string]$logRoot, [string]$worktree, [string]$sid) {
 function Get-SessionNotes {
   # Every captured session note: project log folders (+ the legacy 05_Sessions if it exists).
   $roots = @()
-  if (Test-Path -LiteralPath $ProjRoot) { $roots += @(Get-ChildItem -LiteralPath $ProjRoot -Directory | ForEach-Object { Join-Path $_.FullName 'log' } | Where-Object { Test-Path -LiteralPath $_ }) }
+  if (Test-Path -LiteralPath $ProjRoot) { $roots += @(Get-ProjectFolders | ForEach-Object { Join-Path $_.FullName 'log' } | Where-Object { Test-Path -LiteralPath $_ }) }
   $legacy = Join-Path $VaultPath '05_Sessions'
   if (Test-Path -LiteralPath $legacy) { $roots += $legacy }
   foreach ($r in $roots) { Get-ChildItem -LiteralPath $r -Recurse -File -Filter *.md -ErrorAction SilentlyContinue }
@@ -495,7 +543,7 @@ if (Test-Path -LiteralPath $CacheFile) {
 
 $cutoff = (Get-Date).AddHours(-$SinceHours)
 $files = @(Get-ChildItem -LiteralPath $ProjectsBase -Recurse -Filter *.jsonl -ErrorAction SilentlyContinue |
-  Where-Object { $_.Directory.Name -like $DirFilter -and $_.LastWriteTime -ge $cutoff } |
+  Where-Object { $_.Directory.Name -like $DirFilter -and $_.Directory.Name -ne 'subagents' -and $_.BaseName -notlike 'agent-*' -and $_.LastWriteTime -ge $cutoff } |
   Sort-Object CreationTimeUtc)   # a forked session comes after the one it was forked from
 if ($files.Count -eq 0) { Write-Log 'No recent sessions. Nothing to capture.'; exit 0 }
 
@@ -569,7 +617,7 @@ foreach ($f in $files) {
     }
     $loc = Get-OrcaLocation $cwd
     if ($null -eq $loc) { Write-Log "SKIP session $short (Orca 프로젝트 밖: $cwd)"; $skipped++; continue }
-    $projDir = Get-ProjectDir $loc.Project
+    $projDir = Get-ProjectDir $loc
     $logRoot = Join-Path $projDir 'log'
 
     # ---- Sessions with nothing of their own: leave no note (and remove an older one) ----

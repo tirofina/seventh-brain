@@ -205,7 +205,7 @@ if ($SkipClaudeConfig) { Say '   건너뜀 (-SkipClaudeConfig)' } else {
   $settingsFile = Join-Path $ClaudeHome 'settings.json'
   $rv = To-RulePath $VaultPath
   $want = @{
-    allow = @("Read($rv/**)", "Edit($rv/01_Projects/*/decisions/**)")
+    allow = @("Read($rv/**)", "Edit($rv/01_Projects/*/decisions/**)", "Edit($rv/01_Projects/*/*/decisions/**)")
     deny  = @("Read($rv/99_Private/**)", "Edit($rv/99_Private/**)")
   }
   $s = if (Test-Path -LiteralPath $settingsFile) { (Read-Text $settingsFile) | ConvertFrom-Json } else { New-Object psobject }

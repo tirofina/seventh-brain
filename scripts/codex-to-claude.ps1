@@ -13,7 +13,7 @@
   turn: {"type":"user"|"assistant","cwd":...,"message":{"role":...,"content":[{"type":"text",...}]}}.
   The key is built like Claude Code's project folder names, so the dirFilter in config.json
   matches. Each output file gets the source file's modification time, so the capture step's
-  state file re-summarizes only sessions that changed. Only sessions under orcaRoot are kept.
+  state file re-summarizes only sessions that changed. Only sessions in an Orca project folder (orca-projects.json) or under orcaRoot are kept.
   Save as UTF-8 with BOM (PowerShell 5.1).
 #>
 [CmdletBinding()]
@@ -49,7 +49,19 @@ function Is-Injected([string]$t) {
 
 $sessions = Join-Path $CodexHome 'sessions'
 if (-not (Test-Path -LiteralPath $sessions)) { Write-Log "No Codex sessions folder ($sessions). Nothing to convert."; exit 0 }
-$root = [System.IO.Path]::GetFullPath($OrcaRoot).TrimEnd('\') + '\'
+# Keep sessions whose folder is an Orca project (orca-projects.json from orca-map.ps1) or under OrcaRoot.
+$roots = New-Object System.Collections.Generic.List[string]
+if ($OrcaRoot) { $roots.Add([System.IO.Path]::GetFullPath($OrcaRoot).TrimEnd('\') + '\') }
+$mapFile = Join-Path $ScriptDir 'orca-projects.json'
+if (Test-Path -LiteralPath $mapFile) {
+  try { foreach ($p in @((Get-Content -LiteralPath $mapFile -Raw -Encoding UTF8 | ConvertFrom-Json).projects)) { foreach ($e in @($p.paths)) { $roots.Add(([string]$e.path -replace '/', '\').TrimEnd('\') + '\') } } } catch { }
+}
+if ($roots.Count -eq 0) { Write-Log 'No Orca project list and no orcaRoot. Nothing to convert.'; exit 0 }
+function In-Orca([string]$cwd) {
+  $c = ($cwd -replace '/', '\').TrimEnd('\') + '\'
+  foreach ($r in $roots) { if ($c.StartsWith($r, [System.StringComparison]::OrdinalIgnoreCase)) { return $true } }
+  return $false
+}
 $cutoff = (Get-Date).AddHours(-$SinceHours)
 $done = 0; $skipped = 0
 foreach ($f in @(Get-ChildItem -LiteralPath $sessions -Recurse -Filter 'rollout-*.jsonl' -File | Where-Object { $_.LastWriteTime -ge $cutoff })) {
@@ -59,7 +71,7 @@ foreach ($f in @(Get-ChildItem -LiteralPath $sessions -Recurse -Filter 'rollout-
     try { $meta = $reader.ReadLine() | ConvertFrom-Json } finally { $reader.Close() }
     if ($null -eq $meta -or $meta.type -ne 'session_meta') { $skipped++; continue }
     $cwd = [string]$meta.payload.cwd
-    if (-not $cwd -or -not ($cwd.TrimEnd('\') + '\').StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { $skipped++; continue }
+    if (-not $cwd -or -not (In-Orca $cwd)) { $skipped++; continue }
     $sid = [string]$meta.payload.id
     if (-not $sid) { $sid = [string]$meta.payload.session_id }
     if (-not $sid) { $sid = $f.BaseName }

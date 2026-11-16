@@ -36,7 +36,7 @@ PC가 03:00에 꺼져 있었으면 다음에 켰을 때 밀린 날부터 처리�
 | Windows 10/11 | 작업 스케줄러, PowerShell 5.1 | 기본 설치된 것으로 충분 |
 | [Obsidian](https://obsidian.md) | 노트를 보는 곳 | 커뮤니티 플러그인 필요 없음 |
 | [Ollama](https://ollama.com) + `hermes3:8b` | 로컬 요약 모델 | GPU 메모리 8GB 정도. 부족하면 `hermes3:3b` |
-| Orca | 작업 환경. 프로젝트 구분의 기준 | 기본 위치 `%USERPROFILE%\orca` |
+| Orca | 작업 환경. 프로젝트 구분의 기준 | 프로젝트 폴더는 어디에 있어도 된다. 그룹도 볼트에 그대로 옮겨진다 |
 | Claude Code 또는 Codex | 작업, 그리고 밤 정리 | 둘 다 있으면 밤 정리는 Claude Code가 맡는다 (이유는 아래 Codex 절) |
 
 ## 설치
@@ -186,7 +186,7 @@ Start-ScheduledTask -TaskName 'Hermes-Inbox-Nightly'
 
 ```
 00_Inbox/          새 메모. 밤에 요약, 태그, 관련 노트가 붙는다
-01_Projects/       Orca 프로젝트별
+01_Projects/       Orca 프로젝트별. Orca에서 그룹으로 묶었으면 01_Projects/<그룹>/<프로젝트>
   <프로젝트>/
     _index.md        프로젝트 첫 페이지 (작업 세션이 먼저 읽는다)
     <주제>.md        주제 노트: 지금 상태, 흐름, 정한 것, 남은 질문
@@ -248,7 +248,7 @@ Start-ScheduledTask -TaskName 'Hermes-Inbox-Nightly'
 - 작업 기록은 8B 로컬 모델이 써서 가끔 틀린다. 예를 들어 앞으로 할 일을 이미 한 일처럼 적는 경우가 있다. 밤 정리가 다른 기록과 엇갈리면 데일리에 "확인이 필요하다"고 적지만, 원래 대화가 기준이다.
 - PC가 켜져 있고 로그인돼 있어야 03:00에 돈다. 놓친 날은 다음에 켤 때 처리된다.
 - Windows 전용이다. macOS/Linux에서는 PowerShell 7과 launchd/cron으로 옮겨야 한다.
-- 작업 기록은 Orca 폴더 아래에서 한 대화만 모은다.
+- 작업 기록은 Orca에 등록된 프로젝트에서 한 대화만 모은다. 목록은 밤마다 `orca` 명령으로 새로 읽고, Orca가 꺼져 있으면 마지막 목록을 쓴다. 폴더형 프로젝트의 작업 공간(같은 폴더를 쓰는 것)은 서로 구분되지 않아 "메인"으로 기록된다.
 
 ## 문제 해결
 
