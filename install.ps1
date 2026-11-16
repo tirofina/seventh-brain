@@ -150,6 +150,7 @@ $config = [ordered]@{
   claudeModel         = $ClaudeModel
   claudeFallbackModel = $ClaudeFallbackModel
   codexModel          = $CodexModel
+  syncPrefsToClaude   = ($VaultPath -match '\s')   # Claude's @import cannot take a path with spaces; copy instead
 }
 Write-Text (Join-Path $scriptDir 'config.json') (($config | ConvertTo-Json) + "`r`n") $Utf8
 Say ('   ' + $scriptDir + ' 에 스크립트와 config.json')
@@ -159,14 +160,18 @@ Say ''
 Say '4. Claude Code 전역 지침'
 if ($SkipClaudeConfig) { Say '   건너뜀 (-SkipClaudeConfig)' } else {
   $block = (Read-Text (Join-Path $Kit 'instructions\global-claude.md')).Replace('{{PERSONA}}', $persona).Replace('{{VAULT}}', $VaultPath).Replace('{{ORCA}}', $OrcaRoot)
+  # Claude Code loads the preference note itself through an @import line; Codex gets a nightly copy.
+  $prefsPath = (Join-Path $VaultPath '02_Notes\작업-선호.md') -replace '\\', '/'
+  $claudeImport = if ($config.syncPrefsToClaude) { '(볼트 경로에 공백이 있어, 이 노트는 밤마다 이 파일 아래 구역에 복사된다)' } else { "`r`n@" + $prefsPath }
   if ($hasClaude -or (Test-Path -LiteralPath $ClaudeHome)) {
-    Set-Block (Join-Path $ClaudeHome 'CLAUDE.md') $block
+    Set-Block (Join-Path $ClaudeHome 'CLAUDE.md') $block.Replace('{{PREFS_IMPORT}}', $claudeImport)
     Say ('   Claude Code: ' + (Join-Path $ClaudeHome 'CLAUDE.md'))
   }
   if ($hasCodex -or (Test-Path -LiteralPath $CodexHome)) {
-    Set-Block (Join-Path $CodexHome 'AGENTS.md') $block
+    Set-Block (Join-Path $CodexHome 'AGENTS.md') $block.Replace('{{PREFS_IMPORT}}', '(이 노트는 밤마다 이 파일 아래 구역에 복사된다)')
     Say ('   Codex: ' + (Join-Path $CodexHome 'AGENTS.md'))
   }
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptDir 'sync-prefs.ps1') -CodexHome $CodexHome -ClaudeHome $ClaudeHome | ForEach-Object { '   ' + ($_ -replace '^\S+ \S+\s+\[prefs\] ', '작업 선호: ') }
 }
 
 # 5. Orca workspaces: each project's sessions read its first page before working.

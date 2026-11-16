@@ -83,7 +83,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -VaultPath "D:
 | 1 | `persona.md`를 메모장으로 연다. 저장하고 닫으면 계속된다 |
 | 2 | 볼트 폴더와 기본 노트(홈, 대시보드, 규칙, 템플릿)를 만든다. 이미 있는 파일은 덮지 않는다 |
 | 3 | 야간 스크립트와 `config.json`을 `볼트\90_Meta\scripts`에 넣는다 |
-| 4 | Claude Code(`~/.claude/CLAUDE.md`)와 Codex(`~/.codex/AGENTS.md`)에 페르소나와 볼트 사용 규칙을 넣는다. 원래 내용은 그대로 두고, 바꾸기 전에 백업한다 |
+| 4 | Claude Code(`~/.claude/CLAUDE.md`)와 Codex(`~/.codex/AGENTS.md`)에 페르소나, 볼트 사용 규칙, 작업 선호 노트를 넣는다. 원래 내용은 그대로 두고, 바꾸기 전에 백업한다 |
 | 5 | Orca의 각 프로젝트(`orca\workspaces\<프로젝트>`)에 CLAUDE.md 구역을 넣고, 볼트에 그 프로젝트의 첫 페이지를 만든다 |
 | 6 | Claude Code 권한에 볼트 읽기, 결정 기록 쓰기, `99_Private` 차단을 더한다 (`~/.claude/settings.json`, 백업 후) |
 | 7 | 매일 03:00 작업(`Hermes-Inbox-Nightly`)을 등록한다. 관리자 권한은 필요 없다 |
@@ -124,6 +124,19 @@ Start-ScheduledTask -TaskName 'Hermes-Inbox-Nightly'
 - 꼭 개념 노트로 엮고 싶은 메모에는 `#정리해줘`를 단다.
 - 남에게 보이면 안 되는 기록은 `99_Private`에 쓴다.
 - 작업 중 중요한 결정이나 발견은 Claude/Codex가 그날 데일리의 `## 메모`에 접힌 상자로 남긴다 (설치 때 넣은 지침).
+
+## 쓸수록 내 방식을 안다 (작업 선호)
+
+모델 자체가 학습하지는 않는다. 대신 내 작업 방식을 한 노트에 모아, 모든 세션이 그 노트를 읽고 시작하게 한다.
+
+1. 볼트의 `02_Notes/작업-선호.md`에 규칙을 한 줄씩 적는다 ("커밋 메시지는 한국어로 쓴다" 같은 것). 해야 할 것을 긍정형으로 쓴다.
+2. 대화 중에 작업 방식을 지시하거나 고쳐 주면, Claude/Codex가 데일리 메모에 `HH:MM 선호: ...`로 남긴다.
+3. 밤 정리가 되풀이된 지시나 "선호:" 메모를 찾아, 다음 날 데일리의 **결정할 일**에 `작업 선호에 넣기: <규칙>`으로 올린다 (하루 최대 2개).
+4. 체크하면 다음 밤에 그 규칙이 노트의 "승인된 규칙"에 들어간다. 체크하지 않은 제안은 들어가지 않는다.
+5. Claude Code는 이 노트를 지침에서 바로 불러온다(`@경로`). Codex는 불러오기가 없어, 밤마다 노트 내용이 `~/.codex/AGENTS.md`의 한 구역에 복사된다.
+6. 월요일 주간 노트에 겹치거나 오래된 규칙이 "정리 후보"로 나온다.
+
+한 번 지나가듯 한 말이 영구 규칙이 되지 않도록, 사람이 체크한 것만 들어간다.
 
 ## 예시
 
@@ -179,7 +192,7 @@ Start-ScheduledTask -TaskName 'Hermes-Inbox-Nightly'
     <주제>.md        주제 노트: 지금 상태, 흐름, 정한 것, 남은 질문
     decisions/       결정 기록 (이름에 날짜 없음)
     log/<주제>/      작업 기록 (밤마다 자동)
-02_Notes/          영구 노트 (프로젝트를 넘어서는 개념)
+02_Notes/          영구 노트 (프로젝트를 넘어서는 개념), 작업-선호.md
 03_Daily/          데일리 YYYY-MM-DD.md, 주간 YYYY-Www.md
 04_References/     외부 자료
 90_Meta/           규칙, 스크립트, 템플릿
