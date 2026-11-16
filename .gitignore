@@ -9,3 +9,6 @@ gardener-last.txt
 codex-transcripts/
 *.bak-*
 .obsidian/workspace*.json
+references-db.json
+references-state.json
+orca-projects.json

@@ -17,6 +17,7 @@ $ps = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File')
 & powershell.exe @ps (Join-Path $dir 'codex-to-claude.ps1')
 $codexOut = Join-Path $dir 'codex-transcripts'
 if (Test-Path -LiteralPath $codexOut) { & powershell.exe @ps (Join-Path $dir 'capture-sessions.ps1') -ProjectsBase $codexOut }
+& powershell.exe @ps (Join-Path $dir 'collect-references.ps1')
 & powershell.exe @ps (Join-Path $dir 'process-inbox.ps1')
 & powershell.exe @ps (Join-Path $dir 'gardener.ps1')
 & powershell.exe @ps (Join-Path $dir 'sync-prefs.ps1')
