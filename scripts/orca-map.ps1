@@ -5,9 +5,9 @@
 .DESCRIPTION
   Projects and worktrees come from the Orca CLI (orca repo list / orca worktree list --json).
   Group names are not exposed by the CLI; they are read from a copy of Orca's profile database
-  (projectGroups entry), never from the live file. When Orca is not running or the CLI fails,
-  the previous orca-projects.json is kept, so a 03:00 run with Orca closed still works.
-  Output: { "updated": ..., "projects": [ { id, name, group, folder, paths: [ { path, worktree } ] } ] }
+  (projectGroups entry) and its -wal file, never from the live files. When Orca is not running or
+  the CLI fails, the previous orca-projects.json is kept, so a 03:00 run with Orca closed still works.
+  Output: { "updated": ..., "projects": [ { id, name, group, groupId, folder, paths: [ { path, worktree } ] } ] }
   Save as UTF-8 with BOM (PowerShell 5.1).
 #>
 [CmdletBinding()]
@@ -53,13 +53,23 @@ try {
   $profileId = 'local-default'
   $idx = Join-Path $env:APPDATA 'orca\orca-profile-index.json'
   if (Test-Path -LiteralPath $idx) { $pi = Get-Content -LiteralPath $idx -Raw -Encoding UTF8 | ConvertFrom-Json; if ($pi.activeProfileId) { $profileId = [string]$pi.activeProfileId } }
+  # The database runs in WAL mode: a group made or renamed recently is only in profile-state.db-wal
+  # until Orca checkpoints it, and old copies of a record can stay behind in either file. So both
+  # files are read and, per group id, the record with the latest updatedAt wins.
   $db = Join-Path $env:APPDATA ("orca\profiles\$profileId\profile-state.db")
-  if (Test-Path -LiteralPath $db) {
+  $stamp = @{}
+  foreach ($src in @($db, ($db + '-wal'))) {
+    if (-not (Test-Path -LiteralPath $src)) { continue }
     $tmp = Join-Path $env:TEMP ('orca-profile-' + [guid]::NewGuid().ToString('N') + '.db')
-    Copy-Item -LiteralPath $db -Destination $tmp
+    Copy-Item -LiteralPath $src -Destination $tmp
     try {
       $text = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($tmp))
-      foreach ($m in [regex]::Matches($text, '\{"id":"([0-9a-f-]{36})","name":"([^"]+)","parentPath"')) { $groups[$m.Groups[1].Value] = $m.Groups[2].Value }
+      foreach ($m in [regex]::Matches($text, '\{"id":"([0-9a-f-]{36})","name":"([^"]+)","parentPath"[^{}]{0,400}')) {
+        $u = [regex]::Match($m.Value, '"updatedAt":(\d+)')
+        $t = $(if ($u.Success) { [long]$u.Groups[1].Value } else { 0 })
+        $id = $m.Groups[1].Value
+        if (-not $stamp.ContainsKey($id) -or $t -ge $stamp[$id]) { $groups[$id] = $m.Groups[2].Value; $stamp[$id] = $t }
+      }
     } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
   }
 } catch { Write-Log ('group names unavailable: ' + $_.Exception.Message) }
@@ -73,7 +83,8 @@ $projects = foreach ($r in $repos) {
     $paths.Add([ordered]@{ path = $wp; worktree = [string]$w.displayName })
   }
   $g = if ($r.projectGroupId -and $groups.ContainsKey([string]$r.projectGroupId)) { $groups[[string]$r.projectGroupId] } else { '' }
-  [ordered]@{ id = [string]$r.id; name = [string]$r.displayName; group = $g; folder = (Split-Path -Leaf (Norm $r.path)); paths = $paths }
+  # groupId with an empty group means the name could not be read: sync-project-tree.ps1 then leaves the folder where it is.
+  [ordered]@{ id = [string]$r.id; name = [string]$r.displayName; group = $g; groupId = [string]$r.projectGroupId; folder = (Split-Path -Leaf (Norm $r.path)); paths = $paths }
 }
 $doc = [ordered]@{ updated = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'); projects = @($projects) }
 [System.IO.File]::WriteAllText($OutFile, ($doc | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))

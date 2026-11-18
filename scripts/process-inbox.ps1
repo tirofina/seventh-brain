@@ -213,8 +213,10 @@ $knownText
 $snippet
 ---
 "@
-    $req = @{ model = $Model; prompt = $prompt; stream = $false; format = $Schema; options = @{ temperature = 0.2; num_ctx = 16384 } } | ConvertTo-Json -Depth 10
-    $resp = Invoke-RestMethod -Uri $genUri -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($req)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 300
+    # num_predict caps a repetition loop (seen in capture-sessions.ps1: about 18,000 tokens until a 300 s timeout).
+    $req = @{ model = $Model; prompt = $prompt; stream = $false; format = $Schema; options = @{ temperature = 0.2; num_ctx = 16384; num_predict = 1024; repeat_penalty = 1.1 } } | ConvertTo-Json -Depth 10
+    $resp = Invoke-RestMethod -Uri $genUri -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($req)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 120
+    if ([string]$resp.done_reason -eq 'length') { Write-Log ('SKIP {0}  answer hit the token cap, will retry next run' -f $f.Name); $skipped++; continue }
     $raw  = ([string]$resp.response) -replace '^\s*```(?:json)?\s*', '' -replace '\s*```\s*$', ''
     $data = $raw | ConvertFrom-Json
 

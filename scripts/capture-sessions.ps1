@@ -51,6 +51,9 @@ param(
   [int]$NumCtx = 16384,
   [int]$SingleMax = 7000,      # sessions up to this many characters are summarized in one call
   [int]$ChunkChars = 5000,     # longer ones part by part, about this many characters per part
+  [int]$MaxTokens = 1536,      # answer length cap per call (num_predict); a normal answer is a few hundred tokens
+  [int]$PartMaxTokens = 1024,  # cap for one part summary (1-3 sentences); normal calls finish in 9 s or less (p99)
+  [int]$HermesTimeoutSec = 120,
   [string]$DebugDir = ''       # if set, each session's final prompt and raw answer are saved here
 )
 
@@ -359,13 +362,31 @@ function Get-Frontmatter([string]$text) {
   if ($m.Success) { return $m.Groups[1].Value }
   return ''
 }
-function Invoke-Hermes([string]$prompt, $format) {
-  # temperature 0 and a fixed seed: the same conversation gives the same note on every run.
-  $req = @{ model = $Model; prompt = $prompt; stream = $false; format = $format; options = @{ temperature = 0; seed = 42; num_ctx = $NumCtx } } | ConvertTo-Json -Depth 10
-  $r = Invoke-RestMethod -Uri $genUri -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($req)) -ContentType 'application/json; charset=utf-8' -TimeoutSec 300
-  $script:LastPromptTokens = [int]$r.prompt_eval_count
-  $raw = ([string]$r.response) -replace '^\s*```(?:json)?\s*', '' -replace '\s*```\s*$', ''
-  return ($raw | ConvertFrom-Json)
+function Invoke-Hermes([string]$prompt, $format, [int]$cap = $MaxTokens) {
+  # First try: temperature 0 and a fixed seed, so the same conversation gives the same note on every run.
+  # Greedy decoding sometimes falls into a repetition loop inside the JSON and never stops; in one
+  # observed night four calls ran to about 18,000 tokens until the client timed out at 300 s, while a
+  # normal answer takes 1-7 s. num_predict cuts such a loop within seconds (done_reason 'length'),
+  # and the second try breaks it with a repeat penalty and a little randomness.
+  $tries = @(
+    @{ temperature = 0;   seed = 42; num_ctx = $NumCtx; num_predict = $cap },
+    @{ temperature = 0.3; seed = 7;  num_ctx = $NumCtx; num_predict = $cap; repeat_penalty = 1.15 }
+  )
+  $why = ''
+  for ($t = 0; $t -lt $tries.Count; $t++) {
+    $req = @{ model = $Model; prompt = $prompt; stream = $false; format = $format; options = $tries[$t] } | ConvertTo-Json -Depth 10
+    try {
+      $r = Invoke-RestMethod -Uri $genUri -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($req)) -ContentType 'application/json; charset=utf-8' -TimeoutSec $HermesTimeoutSec
+      if ([string]$r.done_reason -eq 'length') { throw "answer hit the $cap-token cap (repetition loop)" }
+      $script:LastPromptTokens = [int]$r.prompt_eval_count
+      $raw = ([string]$r.response) -replace '^\s*```(?:json)?\s*', '' -replace '\s*```\s*$', ''
+      return ($raw | ConvertFrom-Json)
+    } catch {
+      $why = $_.Exception.Message
+      if ($t -lt $tries.Count - 1) { Write-Log "WARN Hermes try $($t + 1) failed ($why); retrying with repeat penalty" }
+    }
+  }
+  throw $why
 }
 function Get-OrcaLocation([string]$cwd) {
   # Map the session's working directory to an Orca project, using Orca's own project list
@@ -642,7 +663,7 @@ foreach ($f in $files) {
     }
 
     $fullLen = 0; foreach ($t in $turns) { $fullLen += $t.Length + 2 }
-    $partsInfo = ''; $many = $false
+    $partsInfo = ''; $many = $false; $partFails = 0
     $doneAll  = New-Object System.Collections.Generic.List[string]
     if ($fullLen -le $SingleMax) {
       # ---- Short session: one call over the whole conversation ----
@@ -663,10 +684,10 @@ foreach ($f in $files) {
         else {
           try {
             $mp = "다음은 긴 작업 대화의 한 부분이다 ($($i + 1)/$($chunks.Count)). $ActNote 이 부분에서 실제로 한 일과 정한 것을 한국어 평서문 1-3개로 쓴다 (done). 남은 일이 분명히 나오면 next에 `"~하기`"로 쓴다.`n`n$Rules`n`nJSON 객체 하나만 출력한다: {`"done`": [], `"next`": []}`n`n대화 부분:`n---`n$($chunks[$i])`n---"
-            $mr = Invoke-Hermes $mp $MapSchema
+            $mr = Invoke-Hermes $mp $MapSchema $PartMaxTokens
             $r = @{ done = @(Clean-Lines $mr.done | ForEach-Object { Fix-Ending ($_ -replace '한다\.?$', '했다.') }); next = @(Clean-Lines $mr.next | ForEach-Object { To-Todo $_ }) }
             $newCount++
-          } catch { Write-Log "WARN session $short part $($i + 1) failed: $($_.Exception.Message)"; continue }
+          } catch { Write-Log "WARN session $short part $($i + 1) failed: $($_.Exception.Message)"; $partFails++; continue }
         }
         $fresh[$h] = $r
         foreach ($d in @($r.done)) { if ($d) { $doneAll.Add([string]$d) } }
@@ -680,6 +701,7 @@ foreach ($f in $files) {
       $ask = if ($firstOwn) { "`n대화를 시작한 사용자의 요청(제목과 what을 정할 때 참고한다): " + $firstOwn.Substring(0, [Math]::Min(200, $firstOwn.Length)) + "`n" } else { '' }
       $prompt = "다음은 한 작업 대화에서 한 일을 순서대로 모은 목록이다. 이 목록만 보고 작업 기록을 정리한다. 목록에 없는 일은 쓰지 않는다.`n`n$Rules`n`n$FieldsMany`n$intro$ask`n한 일 목록:`n$list$nl"
       $partsInfo = ", 부분 $($chunks.Count)개 중 새로 $($newCount)개"   # "$newCount개" would read as one variable name
+      if ($partFails -gt 0) { $partsInfo += ", 실패 $($partFails)개는 다음 실행에서 다시" }
     }
     $data = Invoke-Hermes $prompt $(if ($many) { $ManySchema } else { $SummarySchema })
     $tokens = $script:LastPromptTokens
@@ -832,7 +854,9 @@ foreach ($f in $files) {
     Write-Utf8 $newFull ((Clean-Text $note) + $tail + "`n")
     foreach ($p in $mine) { if ($p -ne $newFull -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force } }
     $byMarker[$sid] = @($newFull)
-    $state[$sid] = $mtime
+    # A note with failed parts is written now, but the session stays open so the next run
+    # summarizes only the failed parts (the good ones are in the cache) and rewrites the note.
+    if ($partFails -eq 0) { $state[$sid] = $mtime }
     Write-Log ("OK   session $short -> " + (Split-Path $projDir -Leaf) + "/log/$topic/" + [System.IO.Path]::GetFileName($newFull) + "  (입력 $tokens 토큰$partsInfo)")
     $captured++
   }
@@ -851,7 +875,10 @@ foreach ($lr in $touchedLogDirs.Keys) {
 
 try { ($state | ConvertTo-Json) | Set-Content -LiteralPath $StateFile -Encoding UTF8 } catch { Write-Log "WARN: could not write state file" }
 # Keep part summaries only for sessions still in the window (an older session is not captured again).
-$live = @{}; foreach ($f in $files) { $live[[System.IO.Path]::GetFileNameWithoutExtension($f.Name)] = $true }
-foreach ($k in @($cache.Keys)) { if (-not $live.ContainsKey($k)) { $cache.Remove($k) } }
+# nightly.ps1 runs this script twice (Claude sessions, then Codex sessions) over one shared cache,
+# so a session missing from this run's $files may belong to the other pass. Drop an entry only when
+# the session was last captured before the window; its file then no longer qualifies in either pass.
+$cutoffTicks = $cutoff.ToUniversalTime().Ticks
+foreach ($k in @($cache.Keys)) { if ($state.ContainsKey($k) -and $state[$k] -lt $cutoffTicks) { $cache.Remove($k) } }
 try { ($cache | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $CacheFile -Encoding UTF8 } catch { Write-Log "WARN: could not write cache file" }
 Write-Log ("Done. captured=$captured skipped=$skipped failed=$failed")

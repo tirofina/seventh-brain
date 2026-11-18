@@ -6,6 +6,9 @@ capture-cache.json
 gardener-state.json
 gardener-last.json
 gardener-last.txt
+gardener-workload.csv
+tree-state.json
+backups/
 codex-transcripts/
 *.bak-*
 .obsidian/workspace*.json

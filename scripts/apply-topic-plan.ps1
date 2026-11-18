@@ -3,7 +3,7 @@
   Carry out the topic plan the nightly tidy-up wrote: merge overlapping topics and rename topics,
   then fix every link. Claude decides; this script moves the files; Hermes classifies against the result.
 .DESCRIPTION
-  The tidy-up (gardener-prompt.md 3-8) may write 01_Projects/<project>/.topic-plan.json:
+  The tidy-up (gardener-prompt.md 3-6-1) may write 01_Projects/<project>/.topic-plan.json:
     { "merges":  [ { "from": "<topic>", "into": "<topic>", "reason": "..." } ],
       "renames": [ { "from": "<topic>", "to":   "<name>",  "reason": "..." } ] }
   A rename is a merge into a topic that does not exist yet. For each item:
